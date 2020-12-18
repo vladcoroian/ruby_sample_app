@@ -1,62 +1,66 @@
-require 'test_helper'
+class PasswordResetsController < ApplicationController
+  before_action :get_user,         only: [:edit, :update]
+  before_action :valid_user,       only: [:edit, :update]
+  before_action :check_expiration, only: [:edit, :update]    # Case (1)
 
-class PasswordResetsTest < ActionDispatch::IntegrationTest
-  def setup
-    ActionMailer::Base.deliveries.clear
-    @user = users(:michael)
+  def new
   end
-  
-  test "password resets" do
-    get new_password_reset_path
-    assert_template 'password_resets/new'
-    assert_select 'input[name=?]', 'password_reset[email]'
-    # Invalid email
-    post password_resets_path, params: { password_reset: { email: "" } }
-    assert_not flash.empty?
-    assert_template 'password_resets/new'
-    # Valid email
-    post password_resets_path,
-         params: { password_reset: { email: @user.email } }
-    assert_not_equal @user.reset_digest, @user.reload.reset_digest
-    assert_equal 1, ActionMailer::Base.deliveries.size
-    assert_not flash.empty?
-    assert_redirected_to root_url
-    # Password reset form
-    user = assigns(:user)
-    # Wrong email
-    get edit_password_reset_path(user.reset_token, email: "")
-    assert_redirected_to root_url
-    # Inactive user
-    user.toggle!(:activated)
-    get edit_password_reset_path(user.reset_token, email: user.email)
-    assert_redirected_to root_url
-    user.toggle!(:activated)
-    # Right email, wrong token
-    get edit_password_reset_path('wrong token', email: user.email)
-    assert_redirected_to root_url
-    # Right email, right token
-    get edit_password_reset_path(user.reset_token, email: user.email)
-    assert_template 'password_resets/edit'
-    assert_select "input[name=email][type=hidden][value=?]", user.email
-    # Invalid password & confirmation
-    patch password_reset_path(user.reset_token),
-          params: { email: user.email,
-          user: { password: "foobaz",
-          password_confirmation: "barquux" } }
-    assert_select 'div#error_explanation'
-    # Empty password
-    patch password_reset_path(user.reset_token),
-          params: { email: user.email,
-          user: { password: "",
-          password_confirmation: "" } }
-    assert_select 'div#error_explanation'
-    # Valid password & confirmation
-    patch password_reset_path(user.reset_token),
-          params: { email: user.email,
-          user: { password: "foobaz",
-          password_confirmation: "foobaz" } }
-    assert is_logged_in?
-    assert_not flash.empty?
-    assert_redirected_to user
+
+  def create
+    @user = User.find_by(email: params[:password_reset][:email].downcase)
+    if @user
+      @user.create_reset_digest
+      @user.send_password_reset_email
+      flash[:info] = "Email sent with password reset instructions"
+      redirect_to root_url
+    else
+      flash.now[:danger] = "Email address not found"
+      render 'new'
+    end
   end
+
+  def edit
+  end
+
+  def update
+    if params[:user][:password].empty?                  # Case (3)
+      @user.errors.add(:password, "can't be empty")
+      render 'edit'
+    elsif @user.update(user_params)                     # Case (4)
+      reset_session
+      log_in @user
+      flash[:success] = "Password has been reset."
+      redirect_to @user
+    else
+      render 'edit'                                     # Case (2)
+    end
+  end
+
+  private
+
+    def user_params
+      params.require(:user).permit(:password, :password_confirmation)
+    end
+
+    # Before filters
+
+    def get_user
+      @user = User.find_by(email: params[:email])
+    end
+
+    # Confirms a valid user.
+    def valid_user
+      unless (@user && @user.activated? &&
+              @user.authenticated?(:reset, params[:id]))
+        redirect_to root_url
+      end
+    end
+
+    # Checks expiration of reset token.
+    def check_expiration
+      if @user.password_reset_expired?
+        flash[:danger] = "Password reset has expired."
+        redirect_to new_password_reset_url
+      end
+    end
 end
