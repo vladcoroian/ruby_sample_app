@@ -15,7 +15,8 @@ gem 'puma'
 gem 'sass-rails'                  
 gem 'webpacker'                   
 gem 'turbolinks'                  
-gem 'jbuilder'                   
+gem 'jbuilder'
+gem 'jquery-rails'
 gem 'bootsnap',                     require: false
 
 group :development,  :test do
